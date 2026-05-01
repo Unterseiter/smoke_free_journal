@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import '../config/app_colors.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -16,19 +18,60 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime? _lastSmokeTime;
   Map<DateTime, int> _cigarettesPerDay = {};
   Timer? _timer;
+  Box _box = Hive.box('smokingData');
 
   @override
   void initState() {
     super.initState();
     _selectedDay = _focusedDay;
+    _loadData();
     _startTimer();
-    _loadTestData();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadData() async {
+    final storedMap = _box.get('cigarettesPerDay');
+    print('Загружено из Hive: $storedMap');
+    if (storedMap != null) {
+      final decoded = jsonDecode(storedMap) as Map<String, dynamic>;
+      final newMap = <DateTime, int>{};
+      for (var entry in decoded.entries) {
+        final date = DateTime.parse(entry.key);
+        newMap[DateTime(date.year, date.month, date.day)] = entry.value as int;
+      }
+      final lastSmoke = _box.get('lastSmokeTime');
+      setState(() {
+        _cigarettesPerDay = newMap;
+        if (lastSmoke != null) {
+          _lastSmokeTime = DateTime.parse(lastSmoke);
+        }
+      });
+    } else {
+      print('Данных нет, загружаю тестовые');
+      _loadTestData();
+      await _saveData();
+    }
+  }
+
+  Future<void> _saveData() async {
+    final stringMap = <String, int>{};
+    for (var entry in _cigarettesPerDay.entries) {
+      final key = '${entry.key.year}-${entry.key.month.toString().padLeft(2, '0')}-${entry.key.day.toString().padLeft(2, '0')}';
+      stringMap[key] = entry.value;
+    }
+    final encoded = jsonEncode(stringMap);
+    print('Сохраняю: $encoded');
+    await _box.put('cigarettesPerDay', encoded);
+    if (_lastSmokeTime != null) {
+      await _box.put('lastSmokeTime', _lastSmokeTime!.toIso8601String());
+    }
+    await _box.flush();
+    print('Сохранение завершено');
   }
 
   void _startTimer() {
@@ -58,7 +101,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _lastSmokeTime = DateTime(now.year, now.month, now.day - 1, 14, 30);
   }
 
-  void _addCigarette() {
+  void _addCigarette() async {
     final today = DateTime.now();
     setState(() {
       _cigarettesPerDay.update(
@@ -68,44 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       _lastSmokeTime = today;
     });
-  }
-
-  void _removeLastCigarette() {
-    final today = DateTime.now();
-    final todayKey = DateTime(today.year, today.month, today.day);
-    setState(() {
-      if (_cigarettesPerDay.containsKey(todayKey) && _cigarettesPerDay[todayKey]! > 0) {
-        final newCount = _cigarettesPerDay[todayKey]! - 1;
-        if (newCount == 0) {
-          _cigarettesPerDay.remove(todayKey);
-          if (_lastSmokeTime != null && isSameDay(_lastSmokeTime, today)) {
-            _lastSmokeTime = _getLastSmokeTimeBefore(today);
-          }
-        } else {
-          _cigarettesPerDay[todayKey] = newCount;
-        }
-      }
-    });
-  }
-
-  DateTime? _getLastSmokeTimeBefore(DateTime day) {
-    DateTime? lastTime;
-    for (var entry in _cigarettesPerDay.entries) {
-      if (entry.value > 0 && entry.key.isBefore(day)) {
-        if (lastTime == null || entry.key.isAfter(lastTime)) {
-          lastTime = entry.key;
-        }
-      }
-    }
-    return lastTime;
-  }
-
-  String _getTimeSinceLastSmoke() {
-    if (_lastSmokeTime == null) return 'Нет данных';
-    final difference = DateTime.now().difference(_lastSmokeTime!);
-    final hours = difference.inHours;
-    final minutes = difference.inMinutes.remainder(60);
-    return '${hours}ч ${minutes}м';
+    await _saveData();
   }
 
   int _getCigarettesForSelectedDay() {

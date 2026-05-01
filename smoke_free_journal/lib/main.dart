@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'screens/home_screen.dart';
 import 'screens/journal_screen.dart';
 import 'screens/stats_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  await Hive.openBox('smokingData');
   runApp(const SmokeFreeApp());
 }
 
@@ -19,16 +23,16 @@ class SmokeFreeApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF121212),
         cardColor: const Color(0xFF2C2C2C),
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF4CAF50),
-          secondary: Color(0xFF4CAF50),
+          primary: Color(0xFF6C63FF),
+          secondary: Color(0xFFFF6584),
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF1E1E1E),
+          backgroundColor: Color(0xFF000000),
           elevation: 0,
         ),
         bottomNavigationBarTheme: const BottomNavigationBarThemeData(
           backgroundColor: Color(0xFF1E1E1E),
-          selectedItemColor: Color(0xFF4CAF50),
+          selectedItemColor: Color(0xFF6C63FF),
           unselectedItemColor: Colors.grey,
         ),
       ),
@@ -65,18 +69,9 @@ class _MainScreenState extends State<MainScreen> {
           });
         },
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Главная',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.book),
-            label: 'Журнал',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.bar_chart),
-            label: 'Статистика',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Главная'),
+          BottomNavigationBarItem(icon: Icon(Icons.book), label: 'Журнал'),
+          BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: 'Статистика'),
         ],
       ),
     );
