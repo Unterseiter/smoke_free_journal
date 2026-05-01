@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../config/app_colors.dart';
+import 'breathing_exercise.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,6 +20,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<DateTime, int> _cigarettesPerDay = {};
   Timer? _timer;
   Box _box = Hive.box('smokingData');
+  List<Map<String, dynamic>> _journalEntries = [];
+  Set<DateTime> _successfulDays = {};
 
   @override
   void initState() {
@@ -36,7 +39,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadData() async {
     final storedMap = _box.get('cigarettesPerDay');
-    print('Загружено из Hive: $storedMap');
     if (storedMap != null) {
       final decoded = jsonDecode(storedMap) as Map<String, dynamic>;
       final newMap = <DateTime, int>{};
@@ -52,9 +54,39 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       });
     } else {
-      print('Данных нет, загружаю тестовые');
       _loadTestData();
       await _saveData();
+    }
+
+    final journalStored = _box.get('journalEntries');
+    if (journalStored != null) {
+      final decoded = jsonDecode(journalStored) as List<dynamic>;
+      _journalEntries = decoded.map((e) => Map<String, dynamic>.from(e)).toList();
+    } else {
+      _journalEntries = [];
+    }
+    _updateSuccessfulDays();
+  }
+
+  void _updateSuccessfulDays() {
+    final Map<DateTime, int> triggers = {};
+    final Map<DateTime, int> relapses = {};
+    for (var entry in _journalEntries) {
+      final date = DateTime.parse(entry['date']);
+      final day = DateTime(date.year, date.month, date.day);
+      if (entry['type'] == 'trigger') {
+        triggers[day] = (triggers[day] ?? 0) + 1;
+      } else if (entry['type'] == 'relapse') {
+        relapses[day] = (relapses[day] ?? 0) + 1;
+      }
+    }
+    _successfulDays = {};
+    for (var day in {...triggers.keys, ...relapses.keys}) {
+      final t = triggers[day] ?? 0;
+      final r = relapses[day] ?? 0;
+      if (t > r) {
+        _successfulDays.add(day);
+      }
     }
   }
 
@@ -65,13 +97,11 @@ class _HomeScreenState extends State<HomeScreen> {
       stringMap[key] = entry.value;
     }
     final encoded = jsonEncode(stringMap);
-    print('Сохраняю: $encoded');
     await _box.put('cigarettesPerDay', encoded);
     if (_lastSmokeTime != null) {
       await _box.put('lastSmokeTime', _lastSmokeTime!.toIso8601String());
     }
     await _box.flush();
-    print('Сохранение завершено');
   }
 
   void _startTimer() {
@@ -112,6 +142,21 @@ class _HomeScreenState extends State<HomeScreen> {
       _lastSmokeTime = today;
     });
     await _saveData();
+  }
+
+  Future<void> _addReplacement() async {
+    final now = DateTime.now();
+    final entry = {
+      'date': now.toIso8601String(),
+      'type': 'trigger',
+      'content': 'Быстрая замена',
+      'title': 'Быстрая замена',
+    };
+    _journalEntries.insert(0, entry);
+    await _box.put('journalEntries', jsonEncode(_journalEntries));
+    await _box.flush();
+    _updateSuccessfulDays();
+    setState(() {});
   }
 
   int _getCigarettesForSelectedDay() {
@@ -307,20 +352,38 @@ class _HomeScreenState extends State<HomeScreen> {
                     markerBuilder: (context, date, events) {
                       final dateKey = DateTime(date.year, date.month, date.day);
                       final cigarettes = _cigarettesPerDay[dateKey];
-                      if (cigarettes != null && cigarettes > 0) {
-                        return Positioned(
-                          bottom: 0,
-                          child: Container(
-                            width: 6,
-                            height: 6,
-                            decoration: const BoxDecoration(
-                              color: AppColors.warning,
-                              shape: BoxShape.circle,
+                      final isSuccessful = _successfulDays.contains(dateKey);
+
+                      return Stack(
+                        children: [
+                          if (cigarettes != null && cigarettes > 0)
+                            Positioned(
+                              left: 1,
+                              bottom: 0,
+                              child: Container(
+                                width: 6,
+                                height: 6,
+                                decoration: const BoxDecoration(
+                                  color: AppColors.warning,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
                             ),
-                          ),
-                        );
-                      }
-                      return null;
+                          if (isSuccessful)
+                            Positioned(
+                              right: 1,
+                              bottom: 0,
+                              child: Container(
+                                width: 6,
+                                height: 6,
+                                decoration: const BoxDecoration(
+                                  color: AppColors.success,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
                     },
                   ),
                 ),
@@ -363,8 +426,26 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: _buildStyledButton(
                           label: 'SOS',
                           icon: Icons.warning_amber_rounded,
-                          onPressed: () {},
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const BreathingExerciseScreen()),
+                            );
+                          },
                           color: AppColors.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildStyledButton(
+                          label: 'ЗАМЕНА',
+                          icon: Icons.self_improvement,
+                          onPressed: _addReplacement,
+                          color: AppColors.success,
                         ),
                       ),
                     ],
