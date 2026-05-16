@@ -14,14 +14,15 @@ class StatsScreen extends StatefulWidget {
 class _StatsScreenState extends State<StatsScreen> {
   Box _box = Hive.box('smokingData');
   Map<DateTime, int> _cigarettesPerDay = {};
+  List<DateTime> _smokeTimestamps = [];
   List<Map<String, dynamic>> _journalEntries = [];
-  String _selectedPeriod = 'week'; // week, month, 3months, 6months, year, all
+  String _selectedPeriod = 'week';
+  DateTime? _selectedDay; // для режима "День"
 
   final Map<String, int> _periodDays = {
+    'day': 1,
     'week': 7,
     'month': 30,
-    '3months': 90,
-    '6months': 180,
     'year': 365,
     'all': 0,
   };
@@ -43,15 +44,46 @@ class _StatsScreenState extends State<StatsScreen> {
       });
       _cigarettesPerDay = newMap;
     }
+
+    final timestampsStored = _box.get('smokeTimestamps');
+    if (timestampsStored != null) {
+      final decoded = jsonDecode(timestampsStored) as List<dynamic>;
+      _smokeTimestamps = decoded.map((e) => DateTime.parse(e)).toList();
+    } else {
+      _smokeTimestamps = [];
+    }
+
     final journalStored = _box.get('journalEntries');
     if (journalStored != null) {
       final decoded = jsonDecode(journalStored) as List<dynamic>;
       _journalEntries = decoded.map((e) => Map<String, dynamic>.from(e)).toList();
     }
+
+    _selectedDay = DateTime.now();
     setState(() {});
   }
 
-  List<FlSpot> _buildFlSpots() {
+  // ---------- Почасовой график для конкретного дня ----------
+  List<FlSpot> _buildHourlySpots() {
+    if (_selectedDay == null) return [];
+    final day = _selectedDay!;
+    final dayStart = DateTime(day.year, day.month, day.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    final Map<int, int> hourCounts = {};
+    for (var ts in _smokeTimestamps) {
+      if (ts.isAfter(dayStart) && ts.isBefore(dayEnd)) {
+        hourCounts[ts.hour] = (hourCounts[ts.hour] ?? 0) + 1;
+      }
+    }
+    final spots = <FlSpot>[];
+    for (int h = 0; h < 24; h++) {
+      spots.add(FlSpot(h.toDouble(), (hourCounts[h] ?? 0).toDouble()));
+    }
+    return spots;
+  }
+
+  // ---------- Дневной график для периода ----------
+  List<FlSpot> _buildDailySpots() {
     final now = DateTime.now();
     int days;
     if (_selectedPeriod == 'all') {
@@ -71,15 +103,7 @@ class _StatsScreenState extends State<StatsScreen> {
     return spots;
   }
 
-  double _getMaxY() {
-    double max = 0;
-    for (var spot in _buildFlSpots()) {
-      if (spot.y > max) max = spot.y;
-    }
-    return max + 2;
-  }
-
-  List<String> _getDayLabels() {
+  List<String> _getDailyLabels() {
     final now = DateTime.now();
     int days;
     if (_selectedPeriod == 'all') {
@@ -96,23 +120,95 @@ class _StatsScreenState extends State<StatsScreen> {
     });
   }
 
-  int _getTotalTriggers() {
-    return _journalEntries.where((e) => e['type'] == 'trigger').length;
+  DateTime? _getDateByIndex(int index) {
+    final now = DateTime.now();
+    int days;
+    if (_selectedPeriod == 'all') {
+      if (_cigarettesPerDay.isEmpty) return null;
+      final earliest = _cigarettesPerDay.keys.reduce((a, b) => a.isBefore(b) ? a : b);
+      days = now.difference(earliest).inDays + 1;
+      if (days < 7) days = 7;
+    } else {
+      days = _periodDays[_selectedPeriod]!;
+    }
+    if (index < 0 || index >= days) return null;
+    return DateTime(now.year, now.month, now.day - (days - 1 - index));
   }
 
-  int _getTotalRelapses() {
-    return _journalEntries.where((e) => e['type'] == 'relapse').length;
+  // ---------- Подсчёт замен и сигарет за выбранный промежуток ----------
+  int _countReplacements() {
+    if (_selectedPeriod == 'day' && _selectedDay != null) {
+      // За конкретный день
+      final day = _selectedDay!;
+      final dayStart = DateTime(day.year, day.month, day.day);
+      final dayEnd = dayStart.add(const Duration(days: 1));
+      return _journalEntries.where((e) {
+        if (e['type'] != 'trigger') return false;
+        final t = DateTime.parse(e['date']);
+        return t.isAfter(dayStart) && t.isBefore(dayEnd);
+      }).length;
+    } else {
+      // За весь период (неделя, месяц, ...) – по дням
+      final start = _getPeriodStart();
+      final end = DateTime.now();
+      return _journalEntries.where((e) {
+        if (e['type'] != 'trigger') return false;
+        final t = DateTime.parse(e['date']);
+        return t.isAfter(start) && t.isBefore(end.add(const Duration(days: 1)));
+      }).length;
+    }
+  }
+
+  int _countCigarettes() {
+    if (_selectedPeriod == 'day' && _selectedDay != null) {
+      final day = _selectedDay!;
+      return _cigarettesPerDay[DateTime(day.year, day.month, day.day)] ?? 0;
+    } else {
+      final start = _getPeriodStart();
+      final end = DateTime.now();
+      int total = 0;
+      for (var entry in _cigarettesPerDay.entries) {
+        if (!entry.key.isBefore(start) && !entry.key.isAfter(end)) {
+          total += entry.value;
+        }
+      }
+      return total;
+    }
+  }
+
+  DateTime _getPeriodStart() {
+    final now = DateTime.now();
+    switch (_selectedPeriod) {
+      case 'week':
+        return now.subtract(const Duration(days: 6));
+      case 'month':
+        return now.subtract(const Duration(days: 29));
+      case 'year':
+        return now.subtract(const Duration(days: 364));
+      case 'all':
+        if (_cigarettesPerDay.isEmpty) return now;
+        return _cigarettesPerDay.keys.reduce((a, b) => a.isBefore(b) ? a : b);
+      default:
+        return now;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final spots = _buildFlSpots();
-    final maxY = _getMaxY();
-    final labels = _getDayLabels();
-    final totalTriggers = _getTotalTriggers();
-    final totalRelapses = _getTotalRelapses();
-    final totalAttempts = totalTriggers + totalRelapses;
-    final successRate = totalAttempts > 0 ? (totalTriggers / totalAttempts * 100).round() : 0;
+    final isDay = _selectedPeriod == 'day';
+    final spots = isDay ? _buildHourlySpots() : _buildDailySpots();
+    final maxY = _getMaxY(spots);
+    final labels = isDay
+        ? List.generate(24, (h) => '$h:00')
+        : _getDailyLabels();
+    final replacements = _countReplacements();
+    final cigarettes = _countCigarettes();
+    final relapses = _journalEntries
+        .where((e) => e['type'] == 'relapse')
+        .length; // общее количество срывов (можно тоже фильтровать, но оставим пока)
+    final successRate = (replacements + cigarettes) > 0
+        ? (replacements / (replacements + cigarettes) * 100).round()
+        : 0;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -127,60 +223,58 @@ class _StatsScreenState extends State<StatsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Выбор периода
             Wrap(
               spacing: 8,
               children: [
-                ChoiceChip(
-                  label: const Text('Неделя'),
-                  selected: _selectedPeriod == 'week',
-                  onSelected: (_) => setState(() => _selectedPeriod = 'week'),
-                  selectedColor: AppColors.primary,
-                  backgroundColor: AppColors.surface,
-                  labelStyle: TextStyle(color: _selectedPeriod == 'week' ? Colors.white : AppColors.text),
-                ),
-                ChoiceChip(
-                  label: const Text('Месяц'),
-                  selected: _selectedPeriod == 'month',
-                  onSelected: (_) => setState(() => _selectedPeriod = 'month'),
-                  selectedColor: AppColors.primary,
-                  backgroundColor: AppColors.surface,
-                  labelStyle: TextStyle(color: _selectedPeriod == 'month' ? Colors.white : AppColors.text),
-                ),
-                ChoiceChip(
-                  label: const Text('3 мес'),
-                  selected: _selectedPeriod == '3months',
-                  onSelected: (_) => setState(() => _selectedPeriod = '3months'),
-                  selectedColor: AppColors.primary,
-                  backgroundColor: AppColors.surface,
-                  labelStyle: TextStyle(color: _selectedPeriod == '3months' ? Colors.white : AppColors.text),
-                ),
-                ChoiceChip(
-                  label: const Text('Полгода'),
-                  selected: _selectedPeriod == '6months',
-                  onSelected: (_) => setState(() => _selectedPeriod = '6months'),
-                  selectedColor: AppColors.primary,
-                  backgroundColor: AppColors.surface,
-                  labelStyle: TextStyle(color: _selectedPeriod == '6months' ? Colors.white : AppColors.text),
-                ),
-                ChoiceChip(
-                  label: const Text('Год'),
-                  selected: _selectedPeriod == 'year',
-                  onSelected: (_) => setState(() => _selectedPeriod = 'year'),
-                  selectedColor: AppColors.primary,
-                  backgroundColor: AppColors.surface,
-                  labelStyle: TextStyle(color: _selectedPeriod == 'year' ? Colors.white : AppColors.text),
-                ),
-                ChoiceChip(
-                  label: const Text('Всё время'),
-                  selected: _selectedPeriod == 'all',
-                  onSelected: (_) => setState(() => _selectedPeriod = 'all'),
-                  selectedColor: AppColors.primary,
-                  backgroundColor: AppColors.surface,
-                  labelStyle: TextStyle(color: _selectedPeriod == 'all' ? Colors.white : AppColors.text),
-                ),
+                _buildPeriodChip('День', 'day'),
+                _buildPeriodChip('Неделя', 'week'),
+                _buildPeriodChip('Месяц', 'month'),
+                _buildPeriodChip('Год', 'year'),
+                _buildPeriodChip('Всё время', 'all'),
               ],
             ),
+            // Навигация по дням для режима "День"
+            if (isDay)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left, color: AppColors.primary),
+                      onPressed: () {
+                        if (_selectedDay != null) {
+                          setState(() {
+                            _selectedDay = _selectedDay!.subtract(const Duration(days: 1));
+                          });
+                        }
+                      },
+                    ),
+                    Text(
+                      _selectedDay != null
+                          ? '${_selectedDay!.day}.${_selectedDay!.month}.${_selectedDay!.year}'
+                          : 'Сегодня',
+                      style: const TextStyle(color: AppColors.text, fontSize: 16),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right, color: AppColors.primary),
+                      onPressed: () {
+                        if (_selectedDay != null) {
+                          final next = _selectedDay!.add(const Duration(days: 1));
+                          if (!next.isAfter(DateTime.now())) {
+                            setState(() {
+                              _selectedDay = next;
+                            });
+                          }
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
             const SizedBox(height: 16),
+            // График
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -234,6 +328,33 @@ class _StatsScreenState extends State<StatsScreen> {
                             ),
                           ),
                           borderData: FlBorderData(show: false),
+                          lineTouchData: LineTouchData(
+                            touchCallback: (event, response) {
+                              if (!isDay && response?.lineBarSpots != null && response!.lineBarSpots!.isNotEmpty) {
+                                final spot = response.lineBarSpots!.first;
+                                final date = _getDateByIndex(spot.x.toInt());
+                                if (date != null) {
+                                  setState(() {
+                                    _selectedPeriod = 'day';
+                                    _selectedDay = date;
+                                  });
+                                }
+                              }
+                            },
+                            touchTooltipData: LineTouchTooltipData(
+                              getTooltipItems: (spots) {
+                                return spots.map((spot) {
+                                  final label = isDay
+                                      ? '${spot.x.toInt()}:00'
+                                      : _getDailyLabels()[spot.x.toInt()];
+                                  return LineTooltipItem(
+                                    '$label\n${spot.y.toInt()} сиг.',
+                                    const TextStyle(color: Colors.white, fontSize: 12),
+                                  );
+                                }).toList();
+                              },
+                            ),
+                          ),
                           lineBarsData: [
                             LineChartBarData(
                               spots: spots,
@@ -257,48 +378,28 @@ class _StatsScreenState extends State<StatsScreen> {
               ),
             ),
             const SizedBox(height: 24),
+            // Информационные панели
             Row(
               children: [
                 Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppColors.success.withOpacity(0.3)),
-                    ),
-                    child: Column(
-                      children: [
-                        const Icon(Icons.self_improvement, size: 32, color: AppColors.success),
-                        const SizedBox(height: 8),
-                        Text('$totalTriggers', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.success)),
-                        const Text('Успешных замен', style: TextStyle(color: AppColors.textSecondary)),
-                      ],
-                    ),
-                  ),
+                  child: _buildInfoCard(Icons.self_improvement, AppColors.success, replacements.toString(), 'Замены'),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppColors.warning.withOpacity(0.3)),
-                    ),
-                    child: Column(
-                      children: [
-                        const Icon(Icons.smoking_rooms, size: 32, color: AppColors.warning),
-                        const SizedBox(height: 8),
-                        Text('$totalRelapses', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.warning)),
-                        const Text('Срывов', style: TextStyle(color: AppColors.textSecondary)),
-                      ],
-                    ),
-                  ),
+                  child: _buildInfoCard(Icons.smoking_rooms, AppColors.warning, cigarettes.toString(), 'Сигареты'),
                 ),
               ],
             ),
-            if (totalAttempts > 0) ...[
+            if (relapses > 0) ...[
+              const SizedBox(height: 8),
+              Center(
+                child: Text(
+                  'Из них срывов: $relapses',
+                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+              ),
+            ],
+            if ((replacements + cigarettes) > 0) ...[
               const SizedBox(height: 16),
               Center(
                 child: Text(
@@ -311,5 +412,49 @@ class _StatsScreenState extends State<StatsScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildPeriodChip(String label, String period) {
+    final selected = _selectedPeriod == period;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => setState(() {
+        _selectedPeriod = period;
+        if (period == 'day' && _selectedDay == null) {
+          _selectedDay = DateTime.now();
+        }
+      }),
+      selectedColor: AppColors.primary,
+      backgroundColor: AppColors.surface,
+      labelStyle: TextStyle(color: selected ? Colors.white : AppColors.text),
+    );
+  }
+
+  Widget _buildInfoCard(IconData icon, Color color, String value, String subtitle) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 32, color: color),
+          const SizedBox(height: 8),
+          Text(value, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color)),
+          Text(subtitle, style: const TextStyle(color: AppColors.textSecondary)),
+        ],
+      ),
+    );
+  }
+
+  double _getMaxY(List<FlSpot> spots) {
+    double max = 0;
+    for (var spot in spots) {
+      if (spot.y > max) max = spot.y;
+    }
+    return max + 2;
   }
 }

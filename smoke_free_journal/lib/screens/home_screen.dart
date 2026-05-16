@@ -5,6 +5,7 @@ import 'package:table_calendar/table_calendar.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../config/app_colors.dart';
 import 'breathing_exercise.dart';
+import 'stats_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -18,6 +19,7 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime? _selectedDay;
   DateTime? _lastSmokeTime;
   Map<DateTime, int> _cigarettesPerDay = {};
+  List<DateTime> _smokeTimestamps = [];
   Timer? _timer;
   Box _box = Hive.box('smokingData');
   List<Map<String, dynamic>> _journalEntries = [];
@@ -56,6 +58,14 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       _loadTestData();
       await _saveData();
+    }
+
+    final timestampsStored = _box.get('smokeTimestamps');
+    if (timestampsStored != null) {
+      final decoded = jsonDecode(timestampsStored) as List<dynamic>;
+      _smokeTimestamps = decoded.map((e) => DateTime.parse(e)).toList();
+    } else {
+      _smokeTimestamps = [];
     }
 
     final journalStored = _box.get('journalEntries');
@@ -101,6 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_lastSmokeTime != null) {
       await _box.put('lastSmokeTime', _lastSmokeTime!.toIso8601String());
     }
+    await _box.put('smokeTimestamps', jsonEncode(_smokeTimestamps.map((e) => e.toIso8601String()).toList()));
     await _box.flush();
   }
 
@@ -111,25 +122,102 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _loadTestData() {
-    final now = DateTime.now();
-    for (int i = 1; i <= 7; i++) {
-      final day = DateTime(now.year, now.month, now.day - i);
-      int cigaretteCount;
-      if (i == 1) cigaretteCount = 5;
-      else if (i == 2) cigaretteCount = 3;
-      else if (i == 3) cigaretteCount = 8;
-      else if (i == 4) cigaretteCount = 2;
-      else if (i == 5) cigaretteCount = 12;
-      else if (i == 6) cigaretteCount = 1;
-      else cigaretteCount = 4;
-      _cigarettesPerDay[day] = cigaretteCount;
+  final now = DateTime.now();
+  _cigarettesPerDay.clear();
+  _smokeTimestamps.clear();
+  _journalEntries.clear();
+
+  final List<Map<String, dynamic>> testDays = [
+    {'daysAgo': 1, 'count': 5, 'times': ['08:15', '10:30', '13:00', '16:20', '20:00']},
+    {'daysAgo': 2, 'count': 3, 'times': ['09:00', '14:00', '19:30']},
+    {'daysAgo': 3, 'count': 8, 'times': ['07:45', '09:30', '11:00', '13:30', '15:00', '17:45', '20:30', '22:10']},
+    {'daysAgo': 4, 'count': 2, 'times': ['10:00', '18:00']},
+    {'daysAgo': 5, 'count': 12, 'times': ['06:30', '08:00', '09:15', '10:30', '12:00', '14:00', '15:30', '17:00', '18:45', '20:15', '21:30', '23:00']},
+    {'daysAgo': 6, 'count': 1, 'times': ['12:00']},
+    {'daysAgo': 7, 'count': 4, 'times': ['08:30', '12:45', '16:00', '20:15']},
+  ];
+
+  for (var dayData in testDays) {
+    final daysAgo = (dayData['daysAgo'] as num).toInt();
+    final day = DateTime(now.year, now.month, now.day - daysAgo);
+    final count = (dayData['count'] as num).toInt();
+    _cigarettesPerDay[day] = count;
+    for (var timeStr in dayData['times'] as List<String>) {
+      final parts = timeStr.split(':');
+      final h = int.parse(parts[0]);
+      final m = int.parse(parts[1]);
+      final ts = DateTime(day.year, day.month, day.day, h, m);
+      _smokeTimestamps.add(ts);
     }
-    final lastMonth = DateTime(now.year, now.month - 1, 15);
-    _cigarettesPerDay[lastMonth] = 6;
-    final lastMonth2 = DateTime(now.year, now.month - 1, 20);
-    _cigarettesPerDay[lastMonth2] = 3;
-    _lastSmokeTime = DateTime(now.year, now.month, now.day - 1, 14, 30);
   }
+
+  final lastMonth1 = DateTime(now.year, now.month - 1, 15);
+  _cigarettesPerDay[lastMonth1] = 6;
+  _smokeTimestamps.addAll([
+    DateTime(lastMonth1.year, lastMonth1.month, lastMonth1.day, 9, 0),
+    DateTime(lastMonth1.year, lastMonth1.month, lastMonth1.day, 11, 30),
+    DateTime(lastMonth1.year, lastMonth1.month, lastMonth1.day, 14, 0),
+    DateTime(lastMonth1.year, lastMonth1.month, lastMonth1.day, 16, 30),
+    DateTime(lastMonth1.year, lastMonth1.month, lastMonth1.day, 19, 0),
+    DateTime(lastMonth1.year, lastMonth1.month, lastMonth1.day, 21, 30),
+  ]);
+
+  final lastMonth2 = DateTime(now.year, now.month - 1, 20);
+  _cigarettesPerDay[lastMonth2] = 3;
+  _smokeTimestamps.addAll([
+    DateTime(lastMonth2.year, lastMonth2.month, lastMonth2.day, 10, 15),
+    DateTime(lastMonth2.year, lastMonth2.month, lastMonth2.day, 15, 45),
+    DateTime(lastMonth2.year, lastMonth2.month, lastMonth2.day, 20, 0),
+  ]);
+
+  _smokeTimestamps.sort();
+  _lastSmokeTime = _smokeTimestamps.isNotEmpty ? _smokeTimestamps.last : null;
+
+  _journalEntries.addAll([
+    {
+      'date': DateTime(now.year, now.month, now.day - 1, 11, 0).toIso8601String(),
+      'type': 'trigger',
+      'content': 'Вместо сигареты выпил стакан воды',
+      'title': 'Вода вместо сигареты',
+    },
+    {
+      'date': DateTime(now.year, now.month, now.day - 2, 15, 20).toIso8601String(),
+      'type': 'relapse',
+      'content': 'Сорвался после стрессового созвона',
+      'title': 'Срыв после работы',
+    },
+    {
+      'date': DateTime(now.year, now.month, now.day - 3, 9, 0).toIso8601String(),
+      'type': 'note',
+      'content': 'Сегодня чувствую себя хорошо, тяга уменьшилась',
+      'title': 'Позитивный день',
+    },
+    {
+      'date': DateTime(now.year, now.month, now.day - 4, 20, 45).toIso8601String(),
+      'type': 'trigger',
+      'content': 'Сделал дыхательное упражнение на 60 секунд',
+      'title': 'Дыхание помогло',
+    },
+    {
+      'date': DateTime(now.year, now.month, now.day - 5, 8, 30).toIso8601String(),
+      'type': 'relapse',
+      'content': 'Закурил за компанию в баре',
+      'title': 'Социальное давление',
+    },
+    {
+      'date': DateTime(now.year, now.month, now.day - 6, 13, 15).toIso8601String(),
+      'type': 'trigger',
+      'content': 'Отвлёкся на мини-игру вместо курения',
+      'title': 'Игра помогла',
+    },
+    {
+      'date': DateTime(now.year, now.month, now.day - 7, 17, 0).toIso8601String(),
+      'type': 'note',
+      'content': 'Первый день тестовых данных',
+      'title': 'Начало',
+    },
+  ]);
+}
 
   void _addCigarette() async {
     final today = DateTime.now();
@@ -140,23 +228,95 @@ class _HomeScreenState extends State<HomeScreen> {
         ifAbsent: () => 1,
       );
       _lastSmokeTime = today;
+      _smokeTimestamps.add(today);
     });
     await _saveData();
   }
 
-  Future<void> _addReplacement() async {
+  void _removeLastCigarette() async {
+    if (_smokeTimestamps.isEmpty) return;
+    final lastTimestamp = _smokeTimestamps.last;
+    final day = DateTime(lastTimestamp.year, lastTimestamp.month, lastTimestamp.day);
+    setState(() {
+      _smokeTimestamps.removeLast();
+      if (_cigarettesPerDay.containsKey(day) && _cigarettesPerDay[day]! > 0) {
+        final newCount = _cigarettesPerDay[day]! - 1;
+        if (newCount == 0) {
+          _cigarettesPerDay.remove(day);
+          _lastSmokeTime = _smokeTimestamps.isNotEmpty ? _smokeTimestamps.last : null;
+        } else {
+          _cigarettesPerDay[day] = newCount;
+        }
+      }
+    });
+    await _saveData();
+  }
+
+  void _showReplacementDialog() {
+    TextEditingController textController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Замена', style: TextStyle(color: AppColors.text)),
+        content: TextField(
+          controller: textController,
+          maxLines: 4,
+          style: const TextStyle(color: AppColors.text),
+          decoration: const InputDecoration(
+            hintText: 'Что вы сделали вместо курения?',
+            hintStyle: TextStyle(color: AppColors.textSecondary),
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена', style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final content = textController.text.trim();
+              if (content.isNotEmpty) {
+                _addReplacement(content);
+                Navigator.pop(context);
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _addReplacement(String content) async {
     final now = DateTime.now();
+    final title = content.split('\n').first.isEmpty ? 'Без названия' : content.split('\n').first;
     final entry = {
       'date': now.toIso8601String(),
       'type': 'trigger',
-      'content': 'Быстрая замена',
-      'title': 'Быстрая замена',
+      'content': content,
+      'title': title,
     };
     _journalEntries.insert(0, entry);
     await _box.put('journalEntries', jsonEncode(_journalEntries));
     await _box.flush();
     _updateSuccessfulDays();
     setState(() {});
+  }
+
+  String _getTimeSinceLastSmoke() {
+    if (_lastSmokeTime == null) return 'Нет данных';
+    final difference = DateTime.now().difference(_lastSmokeTime!);
+    final hours = difference.inHours;
+    final minutes = difference.inMinutes.remainder(60);
+    return '${hours}ч ${minutes}м';
+  }
+
+  String _getLastSmokeTimestamp() {
+    if (_lastSmokeTime == null) return '—';
+    return '${_lastSmokeTime!.hour.toString().padLeft(2, '0')}:${_lastSmokeTime!.minute.toString().padLeft(2, '0')}';
   }
 
   int _getCigarettesForSelectedDay() {
@@ -189,7 +349,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final screenWidth = MediaQuery.of(context).size.width;
     final calendarWidth = screenWidth - 32;
     final calendarHeight = MediaQuery.of(context).size.height * 0.55;
-    final infoPanelHeight = calendarHeight * 0.45;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -392,7 +551,6 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 16),
             Container(
               width: calendarWidth,
-              height: infoPanelHeight,
               margin: const EdgeInsets.symmetric(horizontal: 5),
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -424,15 +582,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: _buildStyledButton(
-                          label: 'SOS',
-                          icon: Icons.warning_amber_rounded,
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => const BreathingExerciseScreen()),
-                            );
-                          },
-                          color: AppColors.primary,
+                          label: '- СИГАРЕТА',
+                          icon: Icons.remove,
+                          onPressed: _removeLastCigarette,
+                          color: AppColors.warning.withOpacity(0.7),
                         ),
                       ),
                     ],
@@ -442,9 +595,23 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Expanded(
                         child: _buildStyledButton(
+                          label: 'ДЫХАТЕЛЬНАЯ ТЕХНИКА',
+                          icon: Icons.air,
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const BreathingExerciseScreen()),
+                            );
+                          },
+                          color: AppColors.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildStyledButton(
                           label: 'ЗАМЕНА',
                           icon: Icons.self_improvement,
-                          onPressed: _addReplacement,
+                          onPressed: _showReplacementDialog,
                           color: AppColors.success,
                         ),
                       ),
@@ -462,73 +629,106 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildInfoPanelContent() {
     final cigarettesCount = _getCigarettesForSelectedDay();
     final isToday = _selectedDay != null && isSameDay(_selectedDay, DateTime.now());
+    final lastTime = _getLastSmokeTimestamp();
 
-    if (cigarettesCount == 0) {
-      return Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.celebration, size: 48, color: AppColors.success),
-          const SizedBox(height: 12),
-          Text(
-            isToday ? '🎉 Вы сегодня не курили!' : 'В этот день не было сигарет',
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: AppColors.success,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            isToday
-                ? 'Отличная работа! Продолжайте в том же духе! 💪'
-                : 'Отличный день, продолжайте в том же духе! 🌟',
-            style: const TextStyle(
-              fontSize: 14,
-              color: AppColors.textSecondary,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      );
-    } else {
-      return Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.smoking_rooms, size: 48, color: AppColors.warning),
-          const SizedBox(height: 12),
-          Text(
-            'Выкуренo сигарет: $cigarettesCount',
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: AppColors.warning,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Сегодня: ${_formatDate(_selectedDay!)}',
-            style: const TextStyle(fontSize: 14, color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppColors.warning.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              '🚬 ${_getMotivationalMessage(cigarettesCount)}',
-              style: const TextStyle(
-                fontSize: 13,
-                color: AppColors.warning,
-                fontWeight: FontWeight.w500,
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        if (cigarettesCount == 0)
+          Column(
+            children: [
+              const Icon(Icons.celebration, size: 48, color: AppColors.success),
+              const SizedBox(height: 12),
+              Text(
+                isToday ? '🎉 Вы сегодня не курили!' : 'В этот день не было сигарет',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.success,
+                ),
+                textAlign: TextAlign.center,
               ),
+              const SizedBox(height: 8),
+              Text(
+                isToday
+                    ? 'Отличная работа! Продолжайте в том же духе! 💪'
+                    : 'Отличный день, продолжайте в том же духе! 🌟',
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: AppColors.textSecondary,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          )
+        else
+          Column(
+            children: [
+              const Icon(Icons.smoking_rooms, size: 48, color: AppColors.warning),
+              const SizedBox(height: 12),
+              Text(
+                'Выкуренo сигарет: $cigarettesCount',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.warning,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Сегодня: ${_formatDate(_selectedDay!)}',
+                style: const TextStyle(fontSize: 14, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '🚬 ${_getMotivationalMessage(cigarettesCount)}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.warning,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.access_time, size: 16, color: AppColors.textSecondary),
+            const SizedBox(width: 4),
+            Text(
+              'Последняя: $lastTime',
+              style: const TextStyle(fontSize: 14, color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        TextButton.icon(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const StatsScreen()),
+            );
+          },
+          icon: const Icon(Icons.chevron_right, size: 18, color: AppColors.primary),
+          label: const Text(
+            'Подробнее',
+            style: TextStyle(
+              fontSize: 14,
+              color: AppColors.primary,
+              fontWeight: FontWeight.w600,
             ),
           ),
-        ],
-      );
-    }
+        ),
+      ],
+    );
   }
 
   Widget _buildStyledButton({

@@ -94,7 +94,7 @@ class _JournalScreenState extends State<JournalScreen> {
                         backgroundColor: selectedType == 'trigger' ? AppColors.success.withOpacity(0.8) : AppColors.surface,
                         foregroundColor: Colors.white,
                       ),
-                      child: const Text('Триггер'),
+                      child: const Text('Замена'),
                     ),
                   ),
                   const SizedBox(width: 6),
@@ -214,7 +214,7 @@ class _JournalScreenState extends State<JournalScreen> {
                       if (type == 'trigger') {
                         borderColor = AppColors.success;
                         icon = Icons.self_improvement;
-                        typeLabel = 'Триггер';
+                        typeLabel = 'Замена';
                       } else if (type == 'relapse') {
                         borderColor = AppColors.warning;
                         icon = Icons.smoking_rooms;
@@ -270,7 +270,7 @@ class _JournalScreenState extends State<JournalScreen> {
             ),
             const SizedBox(width: 8),
             Text(
-              type == 'trigger' ? 'Триггер' : (type == 'relapse' ? 'Срыв' : 'Заметка'),
+              type == 'trigger' ? 'Замена' : (type == 'relapse' ? 'Срыв' : 'Заметка'),
               style: TextStyle(color: AppColors.text),
             ),
             const Spacer(),
